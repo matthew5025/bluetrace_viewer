@@ -1,4 +1,10 @@
+import 'dart:async';
+import 'dart:collection';
+import 'dart:developer';
+
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 
 void main() {
   runApp(MyApp());
@@ -47,8 +53,79 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   int _counter = 0;
+  var btUuid = Uuid.parse('B82AB3FC-1595-4F6A-80F0-FE094CC218F9');
+  var tokenUuid = Uuid.parse('FFFF');
+  HashMap<String, StreamSubscription<ConnectionStateUpdate>> activeConnections = HashMap<String, StreamSubscription<ConnectionStateUpdate>>();
+  HashSet<String> connectionSet = new HashSet();
+  final flutterReactiveBle = FlutterReactiveBle();
+
+
+  void findDevicesByServices(){
+    flutterReactiveBle.scanForDevices(withServices: [tokenUuid], scanMode: ScanMode.lowLatency).listen((device) {
+      connectToDevice(device);
+    }, onError: (Object error, StackTrace stackTrace) {
+      print(error);
+    });
+
+  }
+
+  void connectToDevice(DiscoveredDevice device){
+    if(connectionSet.contains(device.id)){
+      return;
+    }
+    connectionSet.add(device.id);
+    print(device.id);
+    var connectionStream = flutterReactiveBle.connectToDevice(id: device.id,
+        connectionTimeout: Duration(seconds: 20))
+        .listen((connectionState) {
+          print(connectionState.connectionState);
+          if(connectionState.connectionState == DeviceConnectionState.connected){
+            print('Connected!');
+            getCharacteristic(device);
+
+          }
+    }, onError: (dynamic error){
+          print(error);
+          connectionSet.remove(device.id);
+          return;
+    });
+
+    activeConnections[device.id] = connectionStream;
+  }
+
+  void getCharacteristic(DiscoveredDevice device) {
+    flutterReactiveBle.discoverServices(device.id).asStream().listen((event) async {
+      for (DiscoveredService s in event){
+        if(s.serviceId != btUuid){
+          continue;
+        }
+        var charUUID = Uuid.parse('0544082d-4676-4d5e-8ee0-34bd1907d94f');
+        var characteristic = QualifiedCharacteristic(characteristicId: charUUID, serviceId: s.serviceId, deviceId: device.id);
+
+        print('Service: ${s.serviceId}');
+        for (Uuid charId in s.characteristicIds){
+          print(charId);
+          await readCharacteristic(characteristic);
+        }
+
+      }
+      activeConnections[device.id]!.cancel();
+      activeConnections.remove(device.id);
+      connectionSet.remove(device.id);
+
+    }, onError: (dynamic error){
+      print(error);
+    });
+  }
+
+  Future<void> readCharacteristic(QualifiedCharacteristic characteristic) async {
+    final response = await flutterReactiveBle.readCharacteristic(characteristic);
+    print(response);
+  }
 
   void _incrementCounter() {
+    findDevicesByServices();
+
     setState(() {
       // This call to setState tells the Flutter framework that something has
       // changed in this State, which causes it to rerun the build method below
