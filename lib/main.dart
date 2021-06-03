@@ -1,11 +1,12 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:developer';
+import 'dart:ffi';
+import 'dart:typed_data';
 
 import 'package:bluetrace_viewer/bluetrace.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 
 void main() {
   runApp(MyApp());
@@ -54,12 +55,14 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   int _counter = 0;
-
-  BlueTrace blueTrace = BlueTrace();
+  HashMap<String, BlueTraceDevice> deviceList = HashMap();
+  BlueTrace blueTrace2 = BlueTrace();
 
   void _incrementCounter() {
-    blueTrace.startScan().stream.listen((event) {
-      print(event.deviceName);
+    blueTrace2.startScan().stream.listen((event) {
+      setState(() {
+        updateList(event);
+      });
     });
 
     setState(() {
@@ -70,6 +73,16 @@ class _MyHomePageState extends State<MyHomePage> {
       // called again, and so nothing would appear to happen.
       _counter++;
     });
+  }
+
+  void updateList(BlueTraceDevice blueTraceDevice){
+    deviceList[blueTraceDevice.uniqueId] = blueTraceDevice;
+  }
+
+  List<BlueTraceDevice> getResultList(){
+    var result = deviceList.values.toList();
+        result.sort((a, b) => b.rssi.compareTo(a.rssi));
+    return result;
   }
 
   @override
@@ -86,35 +99,25 @@ class _MyHomePageState extends State<MyHomePage> {
         // the App.build method, and use it to set our appbar title.
         title: Text(widget.title),
       ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Invoke "debug painting" (press "p" in the console, choose the
-          // "Toggle Debug Paint" action from the Flutter Inspector in Android
-          // Studio, or the "Toggle Debug Paint" command in Visual Studio Code)
-          // to see the wireframe for each widget.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            Text(
-              'You have pushed the button this many times:',
+      body: ListView.builder(itemCount: deviceList.length, itemBuilder: (context, index){
+        final item = getResultList()[index];
+        return ExpansionTile(
+          title: Text(item.deviceName),
+          subtitle: Text(item.uniqueId),
+          children: [
+            ListTile(
+              title: Text('Bluetooth Address'),
+              subtitle: Text(item.macAddress),
             ),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headline4,
-            ),
+            ListTile(
+              title: Text('RSSI'),
+              subtitle: Text(item.rssi.toString() + 'dBm'),
+            )
           ],
-        ),
+        );
+      },
+
+
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: _incrementCounter,
