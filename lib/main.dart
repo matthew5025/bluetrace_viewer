@@ -4,6 +4,7 @@ import 'dart:developer';
 import 'dart:ffi';
 import 'dart:typed_data';
 
+import 'package:bluetrace_viewer/BlueTraceView.dart';
 import 'package:bluetrace_viewer/bluetrace.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -56,12 +57,14 @@ class MyHomePage extends StatefulWidget {
 class _MyHomePageState extends State<MyHomePage> {
   int _counter = 0;
   HashMap<String, BlueTraceDevice> deviceList = HashMap();
+  HashMap<String, int> lastSeenTime = HashMap();
   BlueTrace blueTrace2 = BlueTrace();
+  BlueTraceView blueTraceView = BlueTraceView();
 
   void _incrementCounter() {
     blueTrace2.startScan().stream.listen((event) {
       setState(() {
-        updateList(event);
+        blueTraceView.updateList(event);
       });
     });
 
@@ -73,16 +76,6 @@ class _MyHomePageState extends State<MyHomePage> {
       // called again, and so nothing would appear to happen.
       _counter++;
     });
-  }
-
-  void updateList(BlueTraceDevice blueTraceDevice){
-    deviceList[blueTraceDevice.uniqueId] = blueTraceDevice;
-  }
-
-  List<BlueTraceDevice> getResultList(){
-    var result = deviceList.values.toList();
-        result.sort((a, b) => b.rssi.compareTo(a.rssi));
-    return result;
   }
 
   @override
@@ -99,26 +92,7 @@ class _MyHomePageState extends State<MyHomePage> {
         // the App.build method, and use it to set our appbar title.
         title: Text(widget.title),
       ),
-      body: ListView.builder(itemCount: deviceList.length, itemBuilder: (context, index){
-        final item = getResultList()[index];
-        return ExpansionTile(
-          title: Text(item.deviceName),
-          subtitle: Text(item.uniqueId),
-          children: [
-            ListTile(
-              title: Text('Bluetooth Address'),
-              subtitle: Text(item.macAddress),
-            ),
-            ListTile(
-              title: Text('RSSI'),
-              subtitle: Text(item.rssi.toString() + 'dBm'),
-            )
-          ],
-        );
-      },
-
-
-      ),
+      body: blueTraceView.getView(),
       floatingActionButton: FloatingActionButton(
         onPressed: _incrementCounter,
         tooltip: 'Increment',

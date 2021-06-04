@@ -18,8 +18,9 @@ class BlueTrace {
   var deviceInfoUuid = Guid('0000180a-0000-1000-8000-00805f9b34fb');
   var modelNameUuid = Guid('00002a24-0000-1000-8000-00805f9b34fb');
   Map<String, dynamic> iosMapping = Map();
+  Map<String, dynamic> androidMapping = Map();
   HashSet<String> connectionSet;
-  HashSet<String> blackList = HashSet();
+
   BlueTrace()
       : flutterBlue = FlutterBlue.instance,
         connectionSet = HashSet() {}
@@ -28,47 +29,63 @@ class BlueTrace {
   final characteristicSemaphore = LocalSemaphore(1);
 
   StreamController<BlueTraceDevice> startScan() {
-    flutterBlue.startScan();
-    var subscription = flutterBlue.scanResults.listen((event) {
-      for (ScanResult r in event) {
-        processScanResults(r);
-      }
-    });
+    startBleScan();
+    // flutterBlue.startScan();
+    // var subscription = flutterBlue.scanResults.listen((event) {
+    //   for (ScanResult r in event) {
+    //     processScanResults(r);
+    //   }
+    // });
 
     return this.btDeviceStream;
   }
+
+
+  Future<void> startBleScan() async {
+    List<ScanResult> results = List.empty(growable: true);
+    flutterBlue.startScan(timeout: Duration(seconds: 5),
+        withServices: [btUuid, btlUuid])
+        .whenComplete(() => processScanResults(results));
+
+    flutterBlue.scanResults.listen((event) {
+      for(ScanResult r in event){
+        results.add(r);
+      }
+    });
+    flutterBlue.stopScan();
+
+  }
+
 
   Future<String> getJson(String fileName) {
     return rootBundle.loadString(fileName);
   }
 
-  void processScanResults(ScanResult result) {
-    if (this.connectionSet.contains(result.device.id.id) || this.blackList.contains(result.device.id.id)) {
-      return;
-    } else {
-      this.connectionSet.add(result.device.id.id);
-      removeEntry(result.device.id.id);
+  void processScanResults(List<ScanResult> results) {
+    for(ScanResult result in results){
+      if (this.connectionSet.contains(result.device.id.id)) {
+        continue;
+      } else {
+        this.connectionSet.add(result.device.id.id);
+        removeEntry(result.device.id.id);
+      }
+      if (result.advertisementData.serviceUuids.contains(btUuid.toString())) {
+        print(result.advertisementData.serviceUuids);
+        connectToBlueTracePhone(result);
+      } else if (result.advertisementData.serviceUuids
+          .contains(btlUuid.toString())) {
+        processBlueTraceLite(result);
+      }
     }
-    if (result.advertisementData.serviceUuids.contains(btUuid.toString())) {
-      print(result.advertisementData.serviceUuids);
-      connectToBlueTracePhone(result);
-    } else if (result.advertisementData.serviceUuids
-        .contains(btlUuid.toString())) {
-      processBlueTraceLite(result);
-    }
+
+    startBleScan();
+
   }
 
   Future<void> removeEntry(String deviceId) {
     return new Future.delayed(
         Duration(seconds: 15), () => this.connectionSet.remove(deviceId));
   }
-
-  Future<void> addToBlacklist(String deviceId) {
-    this.blackList.add(deviceId);
-    return new Future.delayed(
-        Duration(seconds: 120), () => this.blackList.remove(deviceId));
-  }
-
 
   void processBlueTraceLite(ScanResult result) {
     if (!result.advertisementData.connectable) {
@@ -84,26 +101,39 @@ class BlueTrace {
   }
 
   Future<void> connectToBlueTracePhone(ScanResult result) async {
-    if(!result.advertisementData.connectable){
+    if (!result.advertisementData.connectable) {
       return;
     }
-    connectSemaphore.acquire();
-    await result.device
-        .connect(timeout: Duration(seconds: 10), autoConnect: false);
-    try{
-      if (result.device.name.isEmpty) {
-          await processBlueTraceAndroid(result);
-      } else {
-          await processBlueTraceApple(result);
+    var connectionStatus = await _connectToDevice(result.device, 10);
+    if(connectionStatus){
+      if(result.device.name.isEmpty){
+        await processBlueTraceAndroid(result);
+      }else{
+        await processBlueTraceApple(result);
       }
-    } on PlatformException catch (e) {
-      print('EXCEPTION!');
-      print(e);
-      result.device.disconnect();
-      addToBlacklist(result.device.id.id);
+    }else{
+      print('Could not connect to ${result.device.id.id}');
     }
+  }
 
+  Future<bool> _connectToDevice(BluetoothDevice device, int timeout) async {
+    int state = -1;
+    connectSemaphore.acquire();
+    await device.connect(autoConnect: false).timeout(Duration(seconds: timeout),
+        onTimeout: () {
+      state = 0;
+      device.disconnect();
+    }).then((data) {
+      if (state == -1) {
+        state = 1;
+      }
+    });
     connectSemaphore.release();
+    if (state == 1) {
+      return Future.value(true);
+    } else {
+      return Future.value(false);
+    }
   }
 
   Future<void> processBlueTraceAndroid(ScanResult result) async {
@@ -111,6 +141,15 @@ class BlueTrace {
     var data = await readCharacteristic(device, btUuid, androidUuid);
     BlueTraceOG blueTraceOG =
         BlueTraceOG(String.fromCharCodes(data), device.id.id, result.rssi);
+    if (androidMapping.length == 0) {
+      androidMapping = json.decode(await getJson('android-device.json'));
+    }
+
+    var buffer = androidMapping[blueTraceOG.deviceName];
+    if (buffer != null) {
+      blueTraceOG.deviceName = buffer;
+    }
+
     print(blueTraceOG.deviceName);
     this.btDeviceStream.sink.add(blueTraceOG);
     device.disconnect();
@@ -129,6 +168,8 @@ class BlueTrace {
     if (buffer != null) {
       modelNameStr = buffer;
     }
+
+    modelNameStr = 'Apple $modelNameStr';
 
     var data = await readCharacteristic(device, btUuid, iOSUuid);
     BlueTraceLite blueTraceLite = BlueTraceLite(
